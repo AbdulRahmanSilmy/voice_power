@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow.python.ops import gen_audio_ops as audio_ops
 import time
 import pyaudio
-from .utils import _create_mel_spec
+from .utils import _create_melspec
 
 
 
