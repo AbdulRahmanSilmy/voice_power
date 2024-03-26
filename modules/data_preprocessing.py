@@ -4,6 +4,7 @@ from tensorflow.io import gfile
 import tensorflow_io as tfio
 from tensorflow.python.ops import gen_audio_ops as audio_ops
 import tensorflow as tf
+from .utils import _create_melspec
 
 class DataGenerator(Sequence):
     """Generates data for Keras
@@ -130,23 +131,7 @@ class DataGenerator(Sequence):
     
     def _generate_melspec(self,filename):
         audio=self._process_audio(filename)
-        # normalise the audio
-        audio = audio - np.mean(audio)
-        audio = audio / np.max(np.abs(audio))
-        # create the spectrogram
-        spectrogram = audio_ops.audio_spectrogram(audio,
-                                                  window_size=320,
-                                                  stride=160,
-                                                  magnitude_squared=True).numpy()
-        # reduce the number of frequency bins in our spectrogram to a more sensible level
-        spectrogram = tf.nn.pool(
-            input=tf.expand_dims(spectrogram, -1),
-            window_shape=[1, 6],
-            strides=[1, 6],
-            pooling_type='AVG',
-            padding='SAME')
-        spectrogram = tf.squeeze(spectrogram, axis=0)
-        spectrogram = np.log10(spectrogram + 1e-6)
+        spectrogram=_create_melspec(audio)
         return spectrogram
         
 
@@ -199,3 +184,42 @@ def get_voice_position(audio, noise_floor):
     audio = audio / np.max(np.abs(audio))
     return tfio.audio.trim(audio, axis=0, epsilon=noise_floor)
 
+# Work out how much of the audio file is actually voice
+def get_voice_length(audio, noise_floor):
+    position = get_voice_position(audio, noise_floor)
+    return (position[1] - position[0]).numpy()
+
+# is enough voice present?
+def is_voice_present(audio, noise_floor, required_length):
+    voice_length = get_voice_length(audio, noise_floor)
+    return voice_length >= required_length
+
+
+def process_background(background_file_path,save_folder_path,num_samples=16000):
+    """
+    Takes in background noise and segments it to one second audio signals 
+    to be added to the non-target class for wake word detection.
+
+    Parameters
+    ----------
+    background_file_path: str
+        The filepath associated to the background noise to be segmented.
+    
+    save_folder_path: str
+        The folder path to store segmented audio files. 
+    
+    num_samples: int, default=16000
+        The number of samples within a segmented audio file. 
+
+    """
+ 
+    rate,audio = scipy.io.wavfile.read(background_file_path)
+    audio_length = len(audio)
+
+    background_type=background_file_path.split("/")[-1][:-4]
+
+    for i,section_start in enumerate(range(0, audio_length-num_samples, num_samples)):
+        section_end = section_start + num_samples
+        section = audio[section_start:section_end]
+        sample_filename=save_folder_path+"/"+background_type+str(i)+".wav"
+        scipy.io.wavfile.write(sample_filename, 16000, section.astype(np.int16))
