@@ -5,6 +5,7 @@ import tensorflow_io as tfio
 from tensorflow.python.ops import gen_audio_ops as audio_ops
 import tensorflow as tf
 from .utils import _create_melspec
+import scipy 
 
 class DataGenerator(Sequence):
     """Generates data for Keras
