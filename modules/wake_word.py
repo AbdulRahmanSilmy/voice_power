@@ -4,6 +4,7 @@ import tensorflow as tf
 from tensorflow.python.ops import gen_audio_ops as audio_ops
 import time
 import pyaudio
+from kasa import Discover, Credentials
 from .utils import _create_melspec
 
 
@@ -115,7 +116,9 @@ class AudioBuffer():
         
         return detection
 
-def wake_word_detection(model,
+
+
+async def wake_word_detection(model,
                         format=pyaudio.paInt16,
                         channels=1,
                         rate=16000,
@@ -129,6 +132,14 @@ def wake_word_detection(model,
     """
    
     start=time.time()
+
+    device = await Discover.discover_single(
+        "192.168.147.35",
+        credentials=Credentials("abdul.rahman.silmy@gmail.com", "Lenovo4lif@"),
+        discovery_timeout=10
+    )
+    await device.turn_off()
+
     CHUNK = int(rate*chunk_dur)
     p = pyaudio.PyAudio()
     stream = p.open(format=format, channels=channels, rate=rate, input=True, frames_per_buffer=CHUNK)
@@ -140,6 +151,9 @@ def wake_word_detection(model,
 
     delay_val=0
 
+    state=False
+    past_detection=False
+
     while delay_val<num_chunks:
         data=stream.read(CHUNK, exception_on_overflow = False)
         
@@ -150,11 +164,20 @@ def wake_word_detection(model,
             print(delay-delay_val)
         else:
             detection=buffer.process_audio_stream(npdata) 
+
+            if detection and not past_detection:
+                state = not state
+                if state:
+                    await device.turn_on()
+                else:
+                    await device.turn_off()
             
             print(detection)
+            past_detection=detection
 
         delay_val+=1
 
+    await device.turn_off()
     print('Done')
     stream.close()
     p.terminate()
