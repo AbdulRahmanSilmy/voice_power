@@ -5,7 +5,10 @@ from tensorflow.python.ops import gen_audio_ops as audio_ops
 import time
 import pyaudio
 from kasa import Discover, Credentials
+import wave
 from .utils import _create_melspec
+from wit import Wit
+
 
 
 
@@ -116,9 +119,41 @@ class AudioBuffer():
         
         return detection
 
+def record_audio(output_file, duration=5, chunk_size=1024, format=pyaudio.paInt16, channels=2, sample_rate=44100):
+    audio = pyaudio.PyAudio()
 
+    
+
+    # Open audio stream
+    stream = audio.open(format=format, channels=channels,
+                        rate=sample_rate, input=True,
+                        frames_per_buffer=chunk_size)
+
+    #print("Recording...")
+
+    frames = []
+
+    # Record audio for the specified duration
+    for i in range(0, int(sample_rate / chunk_size * duration)):
+        data = stream.read(chunk_size)
+        frames.append(data)
+
+    #print("Finished recording.")
+
+    # Stop and close the audio stream
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+
+    # Write the recorded audio to a WAV file
+    with wave.open(output_file, 'wb') as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(audio.get_sample_size(format))
+        wf.setframerate(sample_rate)
+        wf.writeframes(b''.join(frames))
 
 async def wake_word_detection(model,
+                              audio_path="test_audio/file1.wav",
                         format=pyaudio.paInt16,
                         channels=1,
                         rate=16000,
@@ -139,6 +174,9 @@ async def wake_word_detection(model,
         discovery_timeout=10
     )
     await device.turn_off()
+
+    #initializing client 
+    client = Wit("PWTMDL7K22YQYG7UYMDN5Q4IIGEKZTAX")
 
     CHUNK = int(rate*chunk_dur)
     p = pyaudio.PyAudio()
@@ -166,13 +204,20 @@ async def wake_word_detection(model,
             detection=buffer.process_audio_stream(npdata) 
 
             if detection and not past_detection:
-                state = not state
-                if state:
+                record_audio(audio_path)
+                resp = None
+                with open(audio_path, 'rb') as f:
+                  resp = client.speech(f, {'Content-Type': 'audio/wav'})
+                value=resp['traits']['wit$on_off'][0]['value']
+                message=resp['text']
+                print(f'message: {message} | action: {value}')
+                
+                if value=='on':
                     await device.turn_on()
                 else:
                     await device.turn_off()
             
-            print(detection)
+            #print(detection)
             past_detection=detection
 
         delay_val+=1
