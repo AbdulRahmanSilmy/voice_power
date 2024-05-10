@@ -24,13 +24,14 @@ The module structure is the following:
 
 # import from public libraries
 import os
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 import numpy as np
 import tensorflow_io as tfio
 import tensorflow as tf
 import scipy
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+from joblib import Parallel, delayed
 
 # imports from modules
 from .utils import get_voice_position, get_files, _create_melspec
@@ -38,13 +39,107 @@ from .utils import get_voice_position, get_files, _create_melspec
 
 class DataGenerator(tf.keras.utils.Sequence):
     """
-    Generates data for Keras Sequence based data generator. 
-    Suitable for building data generator for training and prediction.
+    Used to generate batches of data to be used for training and evaluation  
+    with tensorflow models. This is akin to ImageDataGenerator from keras but 
+    instead converts audio wav files to 2d array constituting the melspecs. 
+    It solves class imbalance where the minority class is the target class 
+    by performing downsampling of the non-target class. It also applies random 
+    augmentations the audio file before it gets converted to mel spectrograms. 
+
+    It carries out data augmentations with the following steps:
+    1. Mean Centering and Normalization: Audio data is mean-centered and normalized to fall within
+    the range of [-1, 1].
+    2. Random Shifting: The voice command is randomly shifted either to the right or left without
+    truncating the audio.
+    3. Background Noise Sampling: A random one-second sample from the background noise is
+    selected.
+    4. Mean Centering and Normalization of Background Noise: The background noise sample is meancentered and normalized.
+    5. Scaling and Addition: Background noise is scaled to a range of [0, 0.1] and added to the
+    normalized audio data from step 2.
+
+    Downsampling of classes are done so based on the following use of ratio parameters:
+    - Since this is binary classification non_taget_ratio = 1-`target_ratio` 
+    - non_target classes are compromised of two subclasses background and other_classes
+    - `other_classes` = 1 - `target_ratio` - `background_ratio`
+
+    Parameters
+    ----------
+    filenames: List[str]
+        A list of all the filenames to be used by the data generator.
+
+    classes: List[str]
+        A list of all the classes.
+
+    data_folder: str
+        The path to the folder containing the audio data.
+
+    target: str, default = 'marvin"
+        The target class for binary classification
+
+    to_fit: bool, default = True
+        Whether to generate the target labels along with the input data. 
+
+    batch_size: int, default = 32
+        The batch size. Default is 32.
+
+    shuffle: bool, default = True
+        Whether to shuffle the data at the end of each epoch. 
+
+    training: bool, default = True
+        Whether the generator is used for training or testing. 
+
+    augment: bool, default = True
+        Whether to apply data augmentation techniques at every epoch.
+
+    dynamic_sampling: bool, default = True
+        Whether to randomly sample the other_classes and background classes 
+        during downsampling at every epoch. 
+
+    noise_floor: float, default = 0.1
+        The normalized audio noise floor threshold for audio repositioning. 
+
+    background_volume: float, default = 0.1
+        The normalized volume of the background noise to be added to the audio.
+
+    target_ratio: float, default = 0.5
+        The ratio of samples to be included for the target class during downsampling. 
+
+    background_ratio: float, default = 0.1
+        The ratio of samples to be included for the background class during downsampling.
+
+    num_samples: int, default = 16000
+        The number of samples in the audio.
+
+    background_noise: str, default = "_background_noise_"
+        The folder within `data_folder` containing audio data to add background noise to 
+        audio files during data augmentation. 
+
+    Attributes
+    -----------
+    other_ratio: float, 
+        The ration of classes not compromising the target and background classes during 
+        downsampling. 
+
+
     """
 
-    def __init__(self, filenames, classes, data_folder, target='marvin',
-                 to_fit=True, batch_size=32,
-                 shuffle=True, training=True, noise_floor=0.1,target_ratio=0.5,background_ratio=0.1):
+    def __init__(self,
+                 filenames: List[str],
+                 classes: List[str],
+                 data_folder: str,
+                 target='marvin',
+                 to_fit=True,
+                 batch_size=32,
+                 shuffle=True,
+                 training=True,
+                 augment=True,
+                 dynamic_sampling=True,
+                 noise_floor=0.1,
+                 background_volume=0.1,
+                 target_ratio=0.5,
+                 background_ratio=0.1,
+                 num_samples=16000,
+                 background_noise="_background_noise_"):
 
         self.filenames = filenames
         self.classes = classes
@@ -54,18 +149,39 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.training = training
+        self.augment = augment
+        self.dynamic_sampling = dynamic_sampling
         self.noise_floor = noise_floor
+        self.background_volume = background_volume
         self.target_ratio = target_ratio
         self.background_ratio = background_ratio
-        self.other_ratio=1-self.target_ratio-self.background_ratio
+        self.other_ratio = 1-self.target_ratio-self.background_ratio
+        self.num_samples = num_samples
+        self.background_noise = background_noise
         self.on_epoch_end()
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """
+        Returns the number of batches in the dataset.
 
+        Returns:
+            int: The number of batches in the dataset.
+        """
         return int(np.floor(len(self.down_sampled_filenames) / self.batch_size))
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Union[Tuple[np.array], np.ndarray]:
+        """
+        Get the batch at the given index.
 
+        Args:
+            index (int): The index of the batch.
+
+        Returns:
+            tuple or ndarray: 
+            - If `to_fit` is True, returns a tuple `(X, y)` where `X` is the input data and `y` is the target data.
+            - If `to_fit` is False, returns only `X`.
+
+        """
         # Generate indexes of the batch
         indexes = self.indexes[index *
                                self.batch_size:(index + 1) * self.batch_size]
@@ -79,11 +195,19 @@ class DataGenerator(tf.keras.utils.Sequence):
         if self.to_fit:
             y = self._generate_y(filenames_temp)
             return X, y
-        else:
-            return X
+
+        return X
 
     def on_epoch_end(self):
-        """Updates indexes after each epoch
+        """
+        Updates indexes after each epoch.
+
+        This method is called at the end of each epoch to update the indexes used for data processing.
+        If the model is in training mode, it down samples the data by calling the `_down_sample_data` method.
+        Otherwise, it concatenates the filenames stored in the `filenames` attribute.
+        The indexes are then updated based on the down sampled filenames or concatenated filenames.
+        If the `shuffle` flag is set to True, the indexes are shuffled randomly.
+
         """
         if self.training:
             self.down_sampled_filenames = self._down_sample_data()
@@ -93,41 +217,72 @@ class DataGenerator(tf.keras.utils.Sequence):
         if self.shuffle:
             np.random.shuffle(self.indexes)
 
-    def _down_sample_data(self):
+    def _down_sample_data(self) -> np.ndarray:
+        """
+        Down samples the data based on the specified ratios and returns the down-sampled filenames.
+        If `dynamic_sampling` is true it performs dynamic downsampling of non-target classes. 
+
+        Returns:
+            numpy.ndarray: The down-sampled filenames.
+        """
         target_class_filenames = self.filenames[0]
         down_sampled_filenames = [target_class_filenames]
 
-        remaining_class_ratios=[self.background_ratio,self.other_ratio]
+        remaining_class_ratios = [self.background_ratio, self.other_ratio]
 
-        num_samples_per_remaining_class=[int(ratio*len(target_class_filenames)) for ratio in remaining_class_ratios]
+        num_samples_per_remaining_class = [
+            int(ratio*len(target_class_filenames)) for ratio in remaining_class_ratios]
 
-        for class_filenames,num_samples in zip(self.filenames[1:],num_samples_per_remaining_class):
-            class_down_sample = np.random.choice(
-                class_filenames, size=num_samples, replace=False)
+        for class_filenames, num_samples in zip(self.filenames[1:], num_samples_per_remaining_class):
+            if self.dynamic_sampling:
+                class_down_sample = np.random.choice(
+                    class_filenames, size=num_samples, replace=False)
+            else:
+                class_down_sample = class_filenames[:num_samples]
             down_sampled_filenames.append(class_down_sample)
 
         down_sampled_filenames = np.concatenate(down_sampled_filenames)
         return down_sampled_filenames
 
-    def _generate_X(self, filenames_temp):
-        # Initialization
-        X = []
+    def _generate_X(self, filenames_temp: List[str]) -> np.ndarray:
+        """
+        Generate the feature matrix X containing mel spectrograms 
+        generated from a list of filenames pointing to audio files.
 
-        # Generate data
-        for i, filename in enumerate(filenames_temp):
-            # Store sample
-            X.append(self._generate_melspec(filename))
+        Parameters
+        ----------
+        filenames_temp: list[str] 
+            A list of filenames.
+
+        Returns
+        --------
+        X: ndarray 
+            The feature matrix containing generated from the filenames.
+        """
+        X = Parallel(n_jobs=-1)(delayed(self._generate_melspec)(filename)
+                                for filename in filenames_temp)
 
         X = np.array(X)
         return X
 
-    def _generate_y(self, filenames_temp):
+    def _generate_y(self, filenames_temp: List[str]) -> np.ndarray:
+        """
+        Generate the target labels for the given filenames.
 
+        Parameters
+        ----------
+        filenames_temp: list[str] 
+            A list of filenames.
+
+        Returns
+        --------
+        y: ndarray
+            Array of target labels.
+
+        """
         y = np.empty((self.batch_size,), dtype=int)
 
-        # Generate data
         for i, filename in enumerate(filenames_temp):
-            # Store sample
             if self.target in filename:
                 y[i,] = 1
             else:
@@ -135,43 +290,74 @@ class DataGenerator(tf.keras.utils.Sequence):
 
         return y
 
-        # process a file into its spectrogram
+    def _process_audio(self, file_path: str) -> np.ndarray:
+        """
+        Preprocesses the audio file located at the given file path. Performs 
+        normalization of audio files. If `augment` is true performs data augmentation 
+        as well. 
 
-    def _process_audio(self, file_path):
+        Parameters
+        ----------
+        file_path: str 
+            The path to the audio file.
+
+        Returns
+        -------
+        audio: np.ndarray
+            The preprocessed audio as a numpy array of floats.
+        """
         # load the audio file
         audio_tensor = tfio.audio.AudioIOTensor(file_path)
         # convert the audio to an array of floats and scale it to betweem -1 and 1
         audio = tf.cast(audio_tensor[:], tf.float32).numpy()
         audio = audio - np.mean(audio)
         audio = audio / np.max(np.abs(audio))
-        # randomly reposition the audio in the sample
-        voice_start, voice_end = get_voice_position(audio, self.noise_floor)
-        voice_start=voice_start[0]
-        voice_end=voice_end[0]
-        end_gap = len(audio) - voice_end
-        random_offset = int(np.random.uniform(0, voice_start+end_gap))
-        audio = np.roll(audio, -random_offset+end_gap)
 
-        # add some random background noise
-        background_volume = np.random.uniform(0, 0.1)
-        # get the background noise files
-        background_files = get_files('_background_noise_', self.data_folder)
-        background_file = np.random.choice(background_files)
-        background_tensor = tfio.audio.AudioIOTensor(background_file)
-        background_start = np.random.randint(0, len(background_tensor) - 16000)
-        # normalise the background noise
-        background = tf.cast(
-            background_tensor[background_start:background_start+16000], tf.float32)
-        background = background - np.mean(background)
-        background = background / np.max(np.abs(background))
-        # mix the audio with the scaled background
-        audio = audio + background_volume * background
+        if self.augment:
+            # randomly reposition the audio in the sample
+            voice_start, voice_end = get_voice_position(
+                audio, self.noise_floor)
+            voice_start = voice_start[0]
+            voice_end = voice_end[0]
+            end_gap = len(audio) - voice_end
+            random_offset = int(np.random.uniform(0, voice_start+end_gap))
+            audio = np.roll(audio, -random_offset+end_gap)
+
+            # add some random background noise
+            background_volume = np.random.uniform(0, self.background_volume)
+            # get the background noise files
+            background_files = get_files(
+                self.background_noise, self.data_folder)
+            background_file = np.random.choice(background_files)
+            background_tensor = tfio.audio.AudioIOTensor(background_file)
+            background_start = np.random.randint(
+                0, len(background_tensor) - self.num_samples)
+            # normalise the background noise
+            background = tf.cast(
+                background_tensor[background_start:background_start+self.num_samples], tf.float32)
+            background = background - np.mean(background)
+            background = background / np.max(np.abs(background))
+            # mix the audio with the scaled background
+            audio = audio + background_volume * background
 
         # get the spectrogram
         return audio
 
-    def _generate_melspec(self, filename):
-        audio = self._process_audio(filename)
+    def _generate_melspec(self, file_path: str) -> np.ndarray:
+        """
+        Generate a mel spectrogram from an audio file.
+
+        Parameters
+        ----------
+        file_path: str 
+            The path to the audio file.
+
+        Returns
+        -------
+        spectrogram: np.ndarray
+            The mel spectrogram of the audio.
+        """
+        audio = self._process_audio(file_path)
         spectrogram = _create_melspec(audio)
         return spectrogram
 
@@ -253,9 +439,9 @@ class SplitDataset():
         self.test_ratio = test_ratio
         self.shuffle = shuffle
         self.seed = seed
-        self.train_size=None
-        self.val_size=None
-        self.test_size=None
+        self.train_size = None
+        self.val_size = None
+        self.test_size = None
 
     def _compute_split_size(self) -> Tuple[int]:
         """
@@ -541,7 +727,9 @@ class FilterAudioData():
         return file_names
 
 
-def process_background(background_file_path, save_folder_path, num_samples=16000):
+def process_background(background_file_path: str,
+                       save_folder_path: str,
+                       num_samples=16000):
     """
     Takes in background noise and segments it to one second audio signals 
     to be added to the non-target class for wake word detection.
