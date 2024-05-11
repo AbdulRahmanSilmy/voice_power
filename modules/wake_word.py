@@ -12,9 +12,9 @@ it to a WAV file. Used to record audio for the speech to text API (Wit.ai).
 - `wake_word_detection`: An async function that performs wake word detection.
 
 """
-import numpy as np 
+import numpy as np
 import time
-import tensorflow as tf 
+import tensorflow as tf
 from tensorflow.python.ops import gen_audio_ops as audio_ops
 import time
 import pyaudio
@@ -32,24 +32,24 @@ class AudioBuffer():
     ----------
     model: keras.model
         A pretrained keras model 
-    
+
     thresh: float, default=0.5
         The cut-off probability to denote a positive class prediction
-    
+
     chunk_dur: float, default=0.5
         The time in seconds denoting size of the chunk.
-    
+
     sample_rate: int, default=16000
         The sample rate used for recording audio.
-    
+
     buffer_size: int, default=5
         The number of chunks stores in the buffer. 
-    
+
     Attributes
     -----------
     chunk_size: int
         The number of samples in a chunk. Determined by chunk_dur*sample_rate
-    
+
     buffer: np.ndarray 
         An array of shape (N,) where N denotes the number of samples stored in 
         a buffer. N=buffer_size*chunk_size
@@ -59,15 +59,14 @@ class AudioBuffer():
     In the future introduce a finite state machine at the process_audio_stream 
     method to make the detection of wake word more stable. 
     """
- 
-    def __init__(self, model,thresh=0.5,chunk_dur=0.5, sample_rate=16000, buffer_size=5):
-        self.model=model
-        self.thresh=thresh
+
+    def __init__(self, model, thresh=0.5, chunk_dur=0.5, sample_rate=16000, buffer_size=5):
+        self.model = model
+        self.thresh = thresh
         self.chunk_size = int(chunk_dur*sample_rate)
         self.sample_rate = sample_rate
         self.buffer_size = buffer_size
         self.buffer = np.zeros((buffer_size * self.chunk_size))
-
 
     def _update_buffer(self, chunk: np.ndarray):
         """
@@ -80,12 +79,12 @@ class AudioBuffer():
             A chunk of audio of shape (chunk_size,) that gets inserted into 
             the buffer.
         """
-        
-        num_samples=chunk.shape[0]
+
+        num_samples = chunk.shape[0]
         self.buffer[:-num_samples] = self.buffer[num_samples:]
         self.buffer[-num_samples:] = chunk
 
-    def _detection(self,audio_signal: np.ndarray) -> bool: 
+    def _detection(self, audio_signal: np.ndarray) -> bool:
         """
         Checking if wake word is present in the audio signal
 
@@ -94,24 +93,24 @@ class AudioBuffer():
         audio_signal: np.ndarray
              An audio signal of shape (N,) where N denotes the number of 
              samples.
-        
+
         Returns
         -------
         presense: bool
             True if presense of wake work is detected False otherwise. 
         """
-       
-        mel_spec=_create_melspec(audio_signal.reshape(-1,1))
-        prediction=self.model(mel_spec.reshape(1,99,43,1),training=False)
-        prediction=prediction.numpy()[0][0]
-        if prediction>self.thresh:
-            presense= True 
+
+        mel_spec = _create_melspec(audio_signal.reshape(-1, 1))
+        prediction = self.model(mel_spec.reshape(1, 99, 43, 1), training=False)
+        prediction = prediction.numpy()[0][0]
+        if prediction > self.thresh:
+            presense = True
         else:
-            presense=False
+            presense = False
 
-        return presense 
+        return presense
 
-    def process_audio_stream(self, chunk:np.ndarray) -> bool:
+    def process_audio_stream(self, chunk: np.ndarray) -> bool:
         """
         Updates the buffer and checks if older chunks in buffer 
         contain the wakeword. 
@@ -121,15 +120,17 @@ class AudioBuffer():
         chunk: np.ndarray
             A chunk of audio of shape (chunk_size,) that gets inserted into 
             the buffer.
-        
+
         detection: bool
             True if presense of wake work is detected False otherwise.
         """
-        
+
         self._update_buffer(chunk)
-        detection=self._detection(self.buffer[-3*self.chunk_size:-self.chunk_size])
-        
+        detection = self._detection(
+            self.buffer[-3*self.chunk_size:-self.chunk_size])
+
         return detection
+
 
 def record_audio(output_file: str, duration=5, chunk_size=1024, format=pyaudio.paInt16, channels=2, sample_rate=44100):
     """
@@ -240,8 +241,8 @@ async def wake_word_detection(model,
         The delay in chunks to tackle microphone noise at the start of recordings.
 
     """
-   
-    start=time.time()
+
+    start = time.time()
 
     device = await Discover.discover_single(
         ipaddress,
@@ -250,61 +251,57 @@ async def wake_word_detection(model,
     )
     await device.turn_off()
 
-    #initializing client 
+    # initializing client
     client = Wit(wit_client)
 
-    #initializing audio stream
+    # initializing audio stream
     CHUNK = int(rate*chunk_dur)
     p = pyaudio.PyAudio()
-    stream = p.open(format=format, channels=channels, rate=rate, input=True, frames_per_buffer=CHUNK)
+    stream = p.open(format=format, channels=channels, rate=rate,
+                    input=True, frames_per_buffer=CHUNK)
 
-    #initializing audio buffer
-    buffer=AudioBuffer(model,thresh=threshold,chunk_dur=chunk_dur,sample_rate=rate,buffer_size=buffer_size)
+    # initializing audio buffer
+    buffer = AudioBuffer(model, thresh=threshold, chunk_dur=chunk_dur,
+                         sample_rate=rate, buffer_size=buffer_size)
 
     print('Recording in...')
 
-    delay_val=0
-    past_detection=False
+    delay_val = 0
+    past_detection = False
 
-    while delay_val<num_chunks:
-        data=stream.read(CHUNK, exception_on_overflow = False)
-        
-        npdata=np.frombuffer(data,dtype=np.int16)
-  
-        #introducing delay to tackle mic noise at the start of recordings
-        if delay_val<delay:
+    while delay_val < num_chunks:
+        data = stream.read(CHUNK, exception_on_overflow=False)
+
+        npdata = np.frombuffer(data, dtype=np.int16)
+
+        # introducing delay to tackle mic noise at the start of recordings
+        if delay_val < delay:
             print(delay-delay_val)
         else:
 
-            detection=buffer.process_audio_stream(npdata) 
+            detection = buffer.process_audio_stream(npdata)
             if detection and not past_detection:
                 record_audio(audio_path)
                 resp = None
                 with open(audio_path, 'rb') as f:
-                  resp = client.speech(f, {'Content-Type': 'audio/wav'})
-                value=resp['traits']['wit$on_off'][0]['value']
-                message=resp['text']
+                    resp = client.speech(f, {'Content-Type': 'audio/wav'})
+                value = resp['traits']['wit$on_off'][0]['value']
+                message = resp['text']
                 print(f'message: {message} | action: {value}')
-                
-                if value=='on':
+
+                if value == 'on':
                     await device.turn_on()
                 else:
                     await device.turn_off()
-            
-            past_detection=detection
 
-        delay_val+=1
+            past_detection = detection
+
+        delay_val += 1
 
     await device.turn_off()
     print('Done')
     stream.close()
     p.terminate()
 
-    end=time.time()
+    end = time.time()
     print(end-start)
-
-
-
-        
-
-
