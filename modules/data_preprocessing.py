@@ -3,7 +3,7 @@ Contains the classes and functions usesd for data preprocessing
 
 The module structure is the following:
 
-- The ``DataGenerator`` is the class used to generate batches of data to be used for 
+- The ``AudioDataGenerator`` is the class used to generate batches of data to be used for 
   training with tensorflow models. This is akin to ImageDataGenerator from keras but 
   instead converts audio wav files to 2d array constituting the melspecs. 
   It solves class imbalance where the minority class is the target class 
@@ -37,7 +37,7 @@ from joblib import Parallel, delayed
 from .utils import get_voice_position, get_files, _create_melspec
 
 
-class DataGenerator(tf.keras.utils.Sequence):
+class AudioDataGenerator(tf.keras.utils.Sequence):
     """
     Used to generate batches of data to be used for training and evaluation  
     with tensorflow models. This is akin to ImageDataGenerator from keras but 
