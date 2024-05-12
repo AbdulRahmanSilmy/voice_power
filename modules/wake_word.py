@@ -12,16 +12,15 @@ it to a WAV file. Used to record audio for the speech to text API (Wit.ai).
 - `wake_word_detection`: An async function that performs wake word detection.
 
 """
+import time
+import wave
 import numpy as np
-import time
-import tensorflow as tf
-from tensorflow.python.ops import gen_audio_ops as audio_ops
-import time
 import pyaudio
 from kasa import Discover, Credentials
-import wave
-from .utils import _create_melspec
 from wit import Wit
+#from local modules
+from .utils import _create_melspec
+
 
 
 class AudioBuffer():
