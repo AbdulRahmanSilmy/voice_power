@@ -1,1 +1,4 @@
 data/
+audio_data/
+test_audio/
+modules/__pycache__/
