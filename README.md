@@ -1,26 +1,37 @@
 # voice_power
 Developing an AI voice activated power adapter
 
-## Background and Motivations
+## Project Goals 
 
-The project aims to create a practical implementation rather than just existing on a
-notebook, focusing on daily usability. The goal is to develop an AI voice-activated
-switch, that allows users to control appliances with a spoken trigger word. This will
-initially be applied to a bedroom lamp.
+- The project aims to develop a robust wake-word detection system tailored to make home applications smart.
+- The solution is to be deployed on an edge device (Raspberry Pi).
+- The wake word model is developed to control the switching of a household appliance based on a spoken trigger word. 
 
-## Objectives
+## What is a wake word detection?
 
-Utilize signal processing and deep learning to handle the continuous and
-unstructured audio data. Signal processing will reduce background noise and create
-mel spectrograms, while deep learning models will classify the wake word. Key
-optimization metrics include model accuracy and detection latency for real-time
-performance.
+Wake word models, also referred to as trigger word models, play a pivotal role in voice-activated
+systems, such as virtual assistants like Amazon Alexa or Google Assistant. These models are designed to
+continuously listen to audio streams and detect specific words or phrases. Once the wake word is
+recognized, the system activates to process subsequent user commands or queries.
 
-## Planned Activities 
+![alt text](pics/image-1.png)
 
-- Conduct a literature review on signal processing and deep learning models for wake word detection on resource-constrained edge devices.
-- Source datasets for training the deep learning model.
-- Deploy the deep learning model on a Raspberry Pi.
-- Implement electric circuitry with relays to create the switch.
-- Test the real-time performance of the system and iterate for improvements.
-- If time permits, attempt deployment on a microcontroller like the ESP32 by scaling down the model using quantization techniques, considering its lower cost for commercial viability.
+## Overview 
+Initially, the data pipeline continuously monitors an audio stream, capturing and storing the most recent one-second segment.
+Subsequently, these audio segments undergo transformation into spectrograms, a fundamental feature
+utilized by wake word detection models. These wake word models analyze the spectrograms to predict
+the presence of the target word 'Marvin', with predictions exceeding 90% triggering a five-second
+recording. This recording is then processed by a speech-to-text model hosted by a cloud service called
+wit-ai, which not only transcribes the speech but also infers the corresponding action to be executed.
+Finally, the inferred action is utilized to control or activate an appliance.
+![alt text](pics/image-2.png)
+
+## Future work 
+- Employ depthwise separable convolution to reduce in the wake word detection model.
+- Dynamically adjust the length of the audio recording sent to the speech-to-text model based on the duration of user speech.  
+- Deploy a light weight speech-to-text model locally on the edge.  
+
+## Links 
+- [Report](https://drive.google.com/file/d/11lDMEO4o5V73IKrxzBxsniu0r8q__0Lz/view?usp=sharing)
+- [Video Presentation](https://www.youtube.com/watch?v=JU44qwh8rWc)
+- [GitHub](https://github.com/AbdulRahmanSilmy/voice_power)
